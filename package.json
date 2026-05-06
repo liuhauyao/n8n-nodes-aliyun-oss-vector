@@ -1,0 +1,48 @@
+{
+  "name": "n8n-nodes-aliyun-oss-vector",
+  "version": "0.2.23",
+  "description": "n8n community node for Alibaba Cloud OSS Vector Bucket — supports insert, retrieve and delete operations with built-in OSS v4 signing.",
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n",
+    "aliyun",
+    "alibaba",
+    "oss",
+    "vector",
+    "langchain"
+  ],
+  "license": "MIT",
+  "author": "Matrees",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc && npm run copy-icons",
+    "copy-icons": "copyfiles \"nodes/**/*.svg\" \"credentials/*.svg\" dist/",
+    "dev": "tsc --watch",
+    "lint": "eslint nodes credentials --ext .ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/AliyunOssVectorApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/AliyunOssVector/AliyunOssVector.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@langchain/core": "^1.1.44",
+    "@types/node": "^20.0.0",
+    "copyfiles": "^2.4.1",
+    "n8n-workflow": "*",
+    "typescript": "^5.3.0",
+    "zod": "*"
+  },
+  "peerDependencies": {
+    "@langchain/core": "*",
+    "n8n-workflow": "*",
+    "zod": "*"
+  }
+}
