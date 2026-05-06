@@ -3,6 +3,7 @@
 [n8n](https://n8n.io) 社区节点：对接**阿里云 OSS 向量 Bucket**（OSS Vector），支持写入向量、相似度检索、按条件过滤、删除向量与索引删除。请求使用 **OSS4-HMAC-SHA256** 与阿里云向量 OpenAPI 规范，无需额外 HTTP 节点拼装签名。
 
 **包名（npm）**：`n8n-nodes-aliyun-oss-vector`  
+**源码**：<https://github.com/liuhauyao/n8n-nodes-aliyun-oss-vector>  
 **许可**：MIT · **维护**：Matrees
 
 ---
