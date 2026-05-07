@@ -2,6 +2,7 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import type {
 	ICredentialsDecrypted,
 	ICredentialTestFunctions,
+	IDataObject,
 	IExecuteFunctions,
 	INode,
 	INodeCredentialTestResult,
@@ -38,6 +39,107 @@ interface N8nDocumentLoader {
 		item: INodeExecutionData,
 		itemIndex: number,
 	): Promise<Array<{ pageContent: string; metadata: Record<string, unknown> }>>;
+}
+
+/**
+ * Keys merged onto tool execute input from the Agent parent item (see n8n `requests-response.ts`)
+ * that must not count as the retrieval query when the model sends empty/wrong tool args.
+ */
+const QUERY_CONTEXT_NOISE_KEYS = new Set([
+	'toolCallId',
+	'tool_call_id',
+	'toolParameters',
+	'hitlParameters',
+	'systemPrompt',
+	'system_prompt',
+	'messages',
+	'sessionId',
+	'session_id',
+]);
+
+/**
+ * AI Agent forwards merged JSON into `retrieve-as-tool` execute(): parent item fields plus `toolInput`
+ * plus `toolCallId`. If the model omits `input`/`query`, only noise keys may remain unless we filter them.
+ */
+function extractRetrieveToolQueryString(itemJson: IDataObject): string | undefined {
+	function preferredKeysPick(data: IDataObject): string | undefined {
+		const preferredKeys = [
+			'input',
+			'query',
+			'question',
+			'search_query',
+			'searchQuery',
+			'keyword',
+			'keywords',
+			'q',
+			'text',
+			'prompt',
+			'search',
+			'chatInput',
+			'guardrailsInput',
+			'userMessage',
+			'content',
+		];
+		for (const key of preferredKeys) {
+			const v = data[key];
+			if (typeof v === 'string' && v.trim()) return v.trim();
+			if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+		}
+		const emptyKeyVal = data[''];
+		if (typeof emptyKeyVal === 'string' && emptyKeyVal.trim()) return emptyKeyVal.trim();
+		return undefined;
+	}
+
+	function tryParseToolArgumentsString(raw: unknown): string | undefined {
+		if (typeof raw !== 'string') return undefined;
+		const t = raw.trim();
+		if (!t.startsWith('{') && !t.startsWith('[')) return undefined;
+		try {
+			const parsed: unknown = JSON.parse(t);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				return walk(parsed as IDataObject, 0);
+			}
+		} catch {
+			return undefined;
+		}
+		return undefined;
+	}
+
+	function walk(data: IDataObject, depth: number): string | undefined {
+		if (depth > 3) return undefined;
+
+		const direct = preferredKeysPick(data);
+		if (direct) return direct;
+
+		const fromArgs =
+			tryParseToolArgumentsString(data.arguments) ??
+			tryParseToolArgumentsString((data as { tool_arguments?: unknown }).tool_arguments);
+		if (fromArgs) return fromArgs;
+
+		const entries = Object.entries(data).filter(([k]) => !QUERY_CONTEXT_NOISE_KEYS.has(k));
+		const filtered: IDataObject = Object.fromEntries(entries);
+
+		const afterNoise = preferredKeysPick(filtered);
+		if (afterNoise) return afterNoise;
+
+		const stringVals = entries
+			.filter(([, v]) => typeof v === 'string' && (v as string).trim().length > 0)
+			.map(([, v]) => (v as string).trim());
+		if (stringVals.length === 1) return stringVals[0];
+
+		if (depth < 3) {
+			for (const [, v] of entries) {
+				if (v && typeof v === 'object' && !Array.isArray(v)) {
+					const nested = walk(v as IDataObject, depth + 1);
+					if (nested) return nested;
+				}
+			}
+		}
+
+		return undefined;
+	}
+
+	return walk(itemJson, 0);
 }
 
 /** Parse OSS Vector metadata filter. Malformed JSON that looks like an object fails fast; garbage strings are ignored. */
@@ -159,8 +261,12 @@ function scoredDocsToToolBlocks(
 	}));
 }
 
+/** Returned as tool output text — wording discourages identical retries under Agent Max iterations. */
+const EMPTY_RETRIEVAL_MESSAGE =
+	'No relevant documents found for this query. Do not repeat the exact same query in a loop; rephrase once at most, otherwise answer from general context and state that retrieval was empty.';
+
 function scoredDocsToLlmText(docs: ScoredDoc[], includeMetadata: boolean): string {
-	if (docs.length === 0) return 'No relevant documents found.';
+	if (docs.length === 0) return EMPTY_RETRIEVAL_MESSAGE;
 	return docs
 		.map(([doc]) =>
 			includeMetadata
@@ -746,19 +852,13 @@ export class AliyunOssVector implements INodeType {
 				const includeMetadata = this.getNodeParameter('includeDocumentMetadata', itemIndex, true) as boolean;
 				const itemIndexName = this.getNodeParameter('indexName', itemIndex) as string;
 
-				// Accept both 'input' (official schema key) and 'query' (used by some LLMs that
-				// ignore the schema parameter name and fall back to their own naming convention).
-				const query =
-					typeof item.json.input === 'string'
-						? item.json.input
-						: typeof item.json.query === 'string'
-						? item.json.query
-						: undefined;
+				const query = extractRetrieveToolQueryString(item.json);
 
 				if (!query) {
+					const keys = Object.keys(item.json ?? {}).join(', ') || '(empty)';
 					throw new NodeOperationError(
 						this.getNode(),
-						`Item ${itemIndex}: input must contain an "input" or "query" string field`,
+						`Item ${itemIndex}: tool arguments must include a non-empty search string (expected keys like input, query, question, …); received keys: ${keys}`,
 					);
 				}
 
@@ -770,7 +870,10 @@ export class AliyunOssVector implements INodeType {
 					topKTool,
 					filter,
 				);
-				const response = scoredDocsToToolBlocks(docs, includeMetadata);
+				const response =
+					docs.length === 0
+						? [{ type: 'text' as const, text: EMPTY_RETRIEVAL_MESSAGE }]
+						: scoredDocsToToolBlocks(docs, includeMetadata);
 
 				resultData.push({
 					json: { response },
@@ -823,28 +926,34 @@ export class AliyunOssVector implements INodeType {
 
 		const context = this;
 
-		const schema = z.object({
-			input: z.string().describe('Query to search for. Required'),
-		});
+		const schema = z
+			.object({
+				input: z.string().optional().describe('Primary search query'),
+				query: z.string().optional().describe('Alternative query field (same meaning as input)'),
+			})
+			.superRefine((val, ctx) => {
+				const q = (val.input?.trim() || val.query?.trim()) ?? '';
+				if (!q) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: 'Provide non-empty input or query',
+					});
+				}
+			});
 
 		const tool = new DynamicStructuredTool({
 			name: toolName,
 			description: toolDescription,
 			schema,
-			func: async (query: unknown) => {
-				const queryString: string =
-					typeof query === 'string'
-						? query
-						: typeof (query as { input?: unknown }).input === 'string'
-							? (query as { input: string }).input
-							: String(query ?? '');
+			func: async (args: { input?: string; query?: string }) => {
+				const queryString = (args.input?.trim() || args.query?.trim()) ?? '';
 
-				if (!queryString.trim()) {
+				if (!queryString) {
 					return 'Error: empty query string.';
 				}
 
 				const { index } = context.addInputData(NodeConnectionTypes.AiTool, [
-					[{ json: { query: queryString } }],
+					[{ json: { input: queryString, query: queryString } }],
 				]);
 
 				try {
@@ -859,7 +968,7 @@ export class AliyunOssVector implements INodeType {
 
 					const contentBlocks =
 						documents.length === 0
-							? [{ type: 'text' as const, text: 'No relevant documents found.' }]
+							? [{ type: 'text' as const, text: EMPTY_RETRIEVAL_MESSAGE }]
 							: scoredDocsToToolBlocks(documents, includeMetadata);
 
 					context.addOutputData(NodeConnectionTypes.AiTool, index, [
