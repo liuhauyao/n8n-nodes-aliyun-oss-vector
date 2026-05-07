@@ -16,7 +16,8 @@
 | **Retrieve (as Vector Store)** | 输出 `AiVectorStore`，可接官方 *Vector Store Retriever* |
 | **Retrieve (as Tool for AI Agent)** | 输出 `AiTool`，供 AI Agent 直接调用检索 |
 | **Query** | 在 Main 上输出相似度检索结果（含 `pageContent` / `score` / `metadata`） |
-| **Delete Vectors** | 按向量 key 删除 |
+| **Delete Vectors** | 按向量 key 删除（支持批量） |
+| **List Vectors** | 分页列举索引内向量 key，可选客户端 metadata 扁平 AND 匹配，便于配合删除 |
 | **Delete Index** | 删除整个向量索引 |
 
 支持 **metadata 过滤**（OSS 文档中的 MongoDB 风格操作符，如 `$eq`、`$and` 等，具体以阿里云向量索引声明的可筛选字段为准）。

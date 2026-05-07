@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-aliyun-oss-vector",
-  "version": "0.2.23",
+  "version": "0.2.25",
   "description": "n8n community node for Alibaba Cloud OSS Vector Bucket — supports insert, retrieve and delete operations with built-in OSS v4 signing.",
   "keywords": [
     "n8n-community-node-package",
@@ -24,6 +24,7 @@
 	"main": "index.js",
   "scripts": {
     "build": "tsc && npm run copy-icons",
+    "prepack": "npm run build",
     "copy-icons": "copyfiles \"nodes/**/*.svg\" \"credentials/*.svg\" dist/",
     "dev": "tsc --watch",
     "lint": "eslint nodes credentials --ext .ts"

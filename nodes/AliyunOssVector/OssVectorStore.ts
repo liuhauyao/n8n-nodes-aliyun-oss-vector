@@ -7,7 +7,7 @@ export interface OssVectorStoreConfig extends OssConfig {
 	autoCreateIndex?: boolean;
 	dimension?: number;
 	/** Optional metadata filter for all retrievals. OSS Vector uses MongoDB-style operators.
-	 *  e.g. { "worldId": { "$eq": "123" } }  or  { "$and": [{ "worldId": { "$eq": "123" } }, { "entityType": { "$eq": "DEFINITION" } }] }
+	 *  e.g. { "tenantId": { "$eq": "acme" } }  or  { "$and": [{ "category": { "$eq": "docs" } }, { "docId": { "$eq": "42" } }] }
 	 */
 	filter?: OssMetadataFilter;
 }
@@ -38,6 +38,39 @@ interface OssQueryResult {
 
 interface OssQueryResponse {
 	vectors?: OssQueryResult[];
+}
+
+/** Single vector row from ListVectors API. See https://help.aliyun.com/zh/oss/developer-reference/listvectors */
+interface OssListVectorRow {
+	key?: string;
+	data?: { float32?: number[] };
+	metadata?: Record<string, unknown>;
+}
+
+interface OssListVectorsResponse {
+	nextToken?: string;
+	vectors?: OssListVectorRow[];
+}
+
+const LIST_VECTORS_MAX_PAGE = 1000;
+const LIST_VECTORS_PAGE_DELAY_MS = 50;
+
+function metaValueMatchesExpected(expected: string, value: unknown): boolean {
+	if (value === undefined || value === null) return false;
+	if (typeof value === 'string') return value === expected;
+	if (Array.isArray(value)) return value.some((item) => String(item) === expected);
+	return String(value) === expected;
+}
+
+/** AND-match: every entry in match must match the vector metadata (OSS stores string | string[]). */
+export function vectorMetadataMatchesFilter(
+	metadata: Record<string, unknown> | undefined,
+	match: Record<string, string>,
+): boolean {
+	for (const [field, expected] of Object.entries(match)) {
+		if (!metaValueMatchesExpected(expected, metadata?.[field])) return false;
+	}
+	return true;
 }
 
 export interface SimpleDocument {
@@ -385,6 +418,72 @@ export class OssVectorStore {
 		});
 	}
 
+	/**
+	 * List vectors in the index with pagination (ListVectors API).
+	 * Optionally filter client-side to keys whose metadata matches all fields in `metadataMatch`.
+	 * When `metadataMatch` is empty/undefined, every listed key is collected (full index scan).
+	 *
+	 * Spec: https://help.aliyun.com/zh/oss/developer-reference/listvectors
+	 */
+	async listVectorKeys(options: {
+		maxResultsPerPage?: number;
+		returnData?: boolean;
+		returnMetadata?: boolean;
+		metadataMatch?: Record<string, string>;
+	}): Promise<{
+		keys: string[];
+		pagesScanned: number;
+		vectorsListed: number;
+	}> {
+		const maxResults = Math.min(
+			LIST_VECTORS_MAX_PAGE,
+			Math.max(1, Math.floor(options.maxResultsPerPage ?? 500)),
+		);
+		const returnData = options.returnData ?? false;
+		const returnMetadata = options.returnMetadata ?? true;
+		const match = options.metadataMatch;
+		const useFilter = match !== undefined && Object.keys(match).length > 0;
+
+		const keys: string[] = [];
+		let nextToken: string | undefined;
+		let pagesScanned = 0;
+		let vectorsListed = 0;
+
+		do {
+			const body: Record<string, unknown> = {
+				indexName: this.config.indexName,
+				maxResults,
+				returnData,
+				returnMetadata,
+			};
+			if (nextToken) {
+				body.nextToken = nextToken;
+			}
+
+			const resp = (await this.callOssApi('listVectors', body)) as OssListVectorsResponse;
+			const rows = resp.vectors ?? [];
+			vectorsListed += rows.length;
+			pagesScanned++;
+
+			for (const row of rows) {
+				const key = row.key;
+				if (!key) continue;
+				if (!useFilter || vectorMetadataMatchesFilter(row.metadata, match!)) {
+					keys.push(key);
+				}
+			}
+
+			const nt = resp.nextToken;
+			nextToken = nt && String(nt).length > 0 ? String(nt) : undefined;
+
+			if (nextToken) {
+				await sleep(LIST_VECTORS_PAGE_DELAY_MS);
+			}
+		} while (nextToken);
+
+		return { keys, pagesScanned, vectorsListed };
+	}
+
 	async deleteIndex(): Promise<void> {
 		await this.callOssApi('deleteVectorIndex', {
 			indexName: this.config.indexName,
@@ -398,7 +497,7 @@ export class OssVectorStore {
 	 *   $eq, $ne, $in, $nin, $exists for field matching
 	 *   $and, $or for combining conditions
 	 *
-	 * Example: { "$and": [{ "worldId": { "$eq": "123" } }, { "entityType": { "$eq": "DEFINITION" } }] }
+	 * Example: { "$and": [{ "category": { "$eq": "docs" } }, { "docId": { "$eq": "42" } }] }
 	 *
 	 * The `filter` param overrides this.config.filter for this call only.
 	 * pointId is preserved in the returned metadata (not stripped).

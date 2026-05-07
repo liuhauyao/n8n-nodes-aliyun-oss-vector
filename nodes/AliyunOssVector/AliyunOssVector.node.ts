@@ -75,7 +75,64 @@ function parseFilter(raw: unknown, errorNode: INode): OssMetadataFilter | undefi
 	return undefined;
 }
 
+/**
+ * Flat metadata AND-match for ListVectors client-side filtering (field → string value).
+ * Nested operators are not supported — use Query + metadataFilter for server-side OSS filters.
+ */
+function parseFlatMetadataMatch(raw: unknown, errorNode: INode): Record<string, string> {
+	if (raw === null || raw === undefined) {
+		return {};
+	}
+
+	let obj: Record<string, unknown>;
+	if (typeof raw === 'object' && !Array.isArray(raw)) {
+		obj = raw as Record<string, unknown>;
+	} else if (typeof raw === 'string') {
+		const s = raw.trim();
+		if (!s || s === '{}') {
+			return {};
+		}
+		try {
+			const parsed: unknown = JSON.parse(s);
+			if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+				throw new NodeOperationError(
+					errorNode,
+					'listMetadataMatch must be a JSON object with string values, e.g. {"category":"docs","docId":"42"}.',
+				);
+			}
+			obj = parsed as Record<string, unknown>;
+		} catch (e) {
+			if (e instanceof NodeOperationError) throw e;
+			if (s.startsWith('{') || s.startsWith('[')) {
+				throw new NodeOperationError(errorNode, 'Invalid listMetadataMatch JSON.');
+			}
+			return {};
+		}
+	} else {
+		return {};
+	}
+
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(obj)) {
+		if (v === null || v === undefined) continue;
+		if (Array.isArray(v)) {
+			out[k] = String(v[0]);
+		} else if (typeof v === 'object') {
+			throw new NodeOperationError(
+				errorNode,
+				`listMetadataMatch field "${k}" must be a string or string array, not an object.`,
+			);
+		} else {
+			out[k] = String(v);
+		}
+	}
+	return out;
+}
+
 type ScoredDoc = [SimpleDocument, number];
+
+const DELETE_VECTORS_BATCH_SIZE = 100;
+const DELETE_BATCH_PAUSE_MS = 120;
 
 async function runOssSimilaritySearch(
 	embeddingsInput: EmbeddingsLike,
@@ -117,7 +174,7 @@ export class AliyunOssVector implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Aliyun OSS Vector Store',
 		name: 'aliyunOssVector',
-		icon: 'file:alibabacloud-oss.svg',
+		icon: 'file:aliyun-oss.svg',
 		group: ['transform'],
 		version: 1,
 		description: 'Store and retrieve vectors using Alibaba Cloud OSS Vector Bucket',
@@ -210,6 +267,13 @@ export class AliyunOssVector implements INodeType {
 						action: 'Delete vectors from the vector store',
 					},
 					{
+						name: 'List Vectors',
+						value: 'listVectors',
+						description:
+							'List vectors via OSS ListVectors (paginated). Optionally filter by flat metadata AND-match client-side; outputs keys for Delete Vectors.',
+						action: 'List vector keys from the vector store',
+					},
+					{
 						name: 'Delete Index',
 						value: 'deleteIndex',
 						description: 'Delete an entire vector index',
@@ -224,8 +288,8 @@ export class AliyunOssVector implements INodeType {
 				type: 'string',
 				default: '',
 				required: true,
-				description: 'OSS vector index name (e.g. w1234567890). For world-scoped data use w{worldId}.',
-				placeholder: 'w1234567890',
+				description: 'OSS vector index name (must match the index in your bucket).',
+				placeholder: 'my_vector_index',
 			},
 			{
 				displayName: 'Tool Name',
@@ -235,7 +299,7 @@ export class AliyunOssVector implements INodeType {
 				required: true,
 				description:
 					'Name of the tool (must be alphanumeric, underscores allowed). This is what the AI Agent uses to identify and call this tool.',
-				placeholder: 'e.g. world_knowledge_search',
+				placeholder: 'e.g. vector_knowledge_search',
 				displayOptions: {
 					show: {
 						operation: ['retrieve-as-tool'],
@@ -246,7 +310,7 @@ export class AliyunOssVector implements INodeType {
 				displayName: 'Tool Description',
 				name: 'toolDescription',
 				type: 'string',
-				default: 'Search the knowledge base for relevant information about the world, definitions, and events.',
+				default: 'Search the vector index and return the most relevant text chunks.',
 				required: true,
 				typeOptions: { rows: 3 },
 				description:
@@ -289,7 +353,7 @@ export class AliyunOssVector implements INodeType {
 				default: '{}',
 				// eslint-disable-next-line n8n-nodes-base/node-param-description-wrong-for-dynamic-options
 				description:
-					'Optional filter (OSS MongoDB-style operators). Invalid object-shaped JSON fails the node; stray text is ignored. Examples: {"worldId":{"$eq":"123"}}, {"$and":[{"worldId":{"$eq":"123"}}]}',
+					'Optional filter (OSS MongoDB-style operators). Invalid object-shaped JSON fails the node; stray text is ignored. Examples: {"docId":{"$eq":"abc"}}, {"$and":[{"docId":{"$eq":"abc"}}]}',
 				displayOptions: {
 					show: {
 						operation: ['retrieve', 'retrieve-as-tool', 'query'],
@@ -361,6 +425,59 @@ export class AliyunOssVector implements INodeType {
 					},
 				},
 			},
+			// ── listVectors ─────────────────────────────────────────────────────
+			{
+				displayName: 'Max Results Per Page',
+				name: 'listMaxResultsPerPage',
+				type: 'number',
+				default: 500,
+				description:
+					'ListVectors page size (1–1000 per OSS). Lower values reduce single-response size.',
+				displayOptions: {
+					show: {
+						operation: ['listVectors'],
+					},
+				},
+			},
+			{
+				displayName: 'Return Vector Data',
+				name: 'listReturnData',
+				type: 'boolean',
+				default: false,
+				description:
+					'Whether to request float32 vectors from OSS (large). Keep false when only keys/metadata are needed.',
+				displayOptions: {
+					show: {
+						operation: ['listVectors'],
+					},
+				},
+			},
+			{
+				displayName: 'Return Metadata',
+				name: 'listReturnMetadata',
+				type: 'boolean',
+				default: true,
+				description: 'Whether to request metadata for each row (required for client-side matching).',
+				displayOptions: {
+					show: {
+						operation: ['listVectors'],
+					},
+				},
+			},
+			{
+				displayName: 'Metadata Match (flat AND)',
+				name: 'listMetadataMatch',
+				type: 'json',
+				default: '{}',
+				// eslint-disable-next-line n8n-nodes-base/node-param-description-wrong-for-dynamic-options
+				description:
+					'JSON object: only vectors whose metadata matches ALL fields (string equality; arrays in metadata match if any element equals) are included. Use expressions to map from upstream items. Empty {} lists every key in the index (paginated full scan — use with care on large indexes).',
+				displayOptions: {
+					show: {
+						operation: ['listVectors'],
+					},
+				},
+			},
 		],
 	};
 
@@ -414,10 +531,55 @@ export class AliyunOssVector implements INodeType {
 							.split(',')
 							.map((k) => k.trim())
 							.filter(Boolean);
-				await store.deleteVectors(keys);
+				for (let off = 0; off < keys.length; off += DELETE_VECTORS_BATCH_SIZE) {
+					const batch = keys.slice(off, off + DELETE_VECTORS_BATCH_SIZE);
+					await store.deleteVectors(batch);
+					if (off + DELETE_VECTORS_BATCH_SIZE < keys.length) {
+						await new Promise((r) => setTimeout(r, DELETE_BATCH_PAUSE_MS));
+					}
+				}
 				results.push({ json: { success: true, indexName, deletedKeys: keys } });
 			}
 			return [results];
+		}
+
+		// ── listVectors (ListVectors API + optional client-side metadata filter) ──
+		if (operation === 'listVectors') {
+			const items = this.getInputData();
+			const out: INodeExecutionData[] = [];
+			for (let i = 0; i < items.length; i++) {
+				const idxName = this.getNodeParameter('indexName', i) as string;
+				const pageSize = this.getNodeParameter('listMaxResultsPerPage', i) as number;
+				const listReturnData = this.getNodeParameter('listReturnData', i) as boolean;
+				const listReturnMetadata = this.getNodeParameter('listReturnMetadata', i) as boolean;
+				const matchRaw = this.getNodeParameter('listMetadataMatch', i, '{}');
+				const metadataMatch = parseFlatMetadataMatch(matchRaw, this.getNode());
+
+				const store = new OssVectorStore(
+					{ embedDocuments: async () => [[]], embedQuery: async () => [] },
+					{ ...ossConfig, indexName: idxName },
+				);
+				const { keys, pagesScanned, vectorsListed } = await store.listVectorKeys({
+					maxResultsPerPage: pageSize,
+					returnData: listReturnData,
+					returnMetadata: listReturnMetadata,
+					metadataMatch,
+				});
+
+				out.push({
+					json: {
+						success: true,
+						operation: 'listVectors',
+						indexName: idxName,
+						keys,
+						deleteKeys: keys,
+						matchedKeyCount: keys.length,
+						pagesScanned,
+						vectorsListed,
+					},
+				});
+			}
+			return [out];
 		}
 
 		// ── query ──────────────────────────────────────────────────────────────
@@ -530,9 +692,8 @@ export class AliyunOssVector implements INodeType {
 					(failedItems.length > 0 ? `, ${failedItems.length} items failed: ${failedItems.join(', ')}` : ''),
 			);
 
-			// Pass through the first input item's metadata so downstream callback nodes
-			// can read worldId / entityType / entityId / pointId without relying on
-			// n8n item-pairing across a SplitInBatches boundary.
+			// Pass through the first input item's metadata so downstream nodes can read
+			// the same fields without relying on n8n item-pairing across SplitInBatches.
 			const firstItemMeta =
 				items.length > 0
 					? ((items[0].json?.metadata as Record<string, unknown>) ?? {})
