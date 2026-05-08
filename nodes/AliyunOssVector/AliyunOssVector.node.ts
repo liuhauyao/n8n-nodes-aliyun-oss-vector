@@ -854,13 +854,15 @@ export class AliyunOssVector implements INodeType {
 
 				const query = extractRetrieveToolQueryString(item.json);
 
-				if (!query) {
-					const keys = Object.keys(item.json ?? {}).join(', ') || '(empty)';
-					throw new NodeOperationError(
-						this.getNode(),
-						`Item ${itemIndex}: tool arguments must include a non-empty search string (expected keys like input, query, question, …); received keys: ${keys}`,
-					);
-				}
+			if (!query) {
+				resultData.push({
+					json: {
+						response: [{ type: 'text' as const, text: 'Error: no search query provided. Please retry with a specific keyword or question.' }],
+					},
+					pairedItem: { item: itemIndex },
+				});
+				continue;
+			}
 
 				const docs = await runOssSimilaritySearch(
 					embeddingsInput,
@@ -926,27 +928,21 @@ export class AliyunOssVector implements INodeType {
 
 		const context = this;
 
-		const schema = z
-			.object({
-				input: z.string().optional().describe('Primary search query'),
-				query: z.string().optional().describe('Alternative query field (same meaning as input)'),
-			})
-			.superRefine((val, ctx) => {
-				const q = (val.input?.trim() || val.query?.trim()) ?? '';
-				if (!q) {
-					ctx.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: 'Provide non-empty input or query',
-					});
-				}
-			});
+		const schema = z.object({
+			input: z
+				.string()
+				.min(1, 'Search query must not be empty')
+				.describe(
+					'Search query (required). Provide a non-empty keyword, question, or phrase to look up in the vector store.',
+				),
+		});
 
 		const tool = new DynamicStructuredTool({
 			name: toolName,
 			description: toolDescription,
 			schema,
-			func: async (args: { input?: string; query?: string }) => {
-				const queryString = (args.input?.trim() || args.query?.trim()) ?? '';
+			func: async (args: { input: string }) => {
+				const queryString = args.input.trim();
 
 				if (!queryString) {
 					return 'Error: empty query string.';
