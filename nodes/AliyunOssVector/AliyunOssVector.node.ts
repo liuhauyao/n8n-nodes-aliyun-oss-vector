@@ -759,10 +759,13 @@ export class AliyunOssVector implements INodeType {
 			// behavior (populateVectorStore called per item). Per-item error isolation allows
 			// other items to continue when one fails.
 			let totalInserted = 0;
-			const failedItems: string[] = [];
+			const failedItemsGlobal: string[] = [];
+			const outputItems: INodeExecutionData[] = [];
 
 			for (let i = 0; i < items.length; i++) {
 				let baseKey = `item_${i}`;
+				let insertedForItem = 0;
+				const failedForItem: string[] = [];
 				try {
 					const chunks = await documentInput.processItem(items[i], i);
 					if (!chunks || chunks.length === 0) continue;
@@ -784,41 +787,55 @@ export class AliyunOssVector implements INodeType {
 					if (docs.length === 0) continue;
 
 					const insertedKeys = await store.addDocuments(docs);
+					insertedForItem += insertedKeys.length;
 					totalInserted += insertedKeys.length;
 				} catch (err) {
 					// Log the failing item's key and continue — partial sync is better than no sync.
 					const msg = err instanceof Error ? err.message : String(err);
 					this.logger.warn(`OSS Vector: failed to insert item ${i} (${baseKey}): ${msg}`);
-					failedItems.push(baseKey);
+					failedForItem.push(baseKey);
+					failedItemsGlobal.push(baseKey);
 				}
+
+				const itemMeta =
+					(items[i]?.json?.metadata as Record<string, unknown> | undefined) ?? {};
+				outputItems.push({
+					json: {
+						success: failedForItem.length === 0,
+						indexName,
+						sourceItems: 1,
+						totalVectors: insertedForItem,
+						failedItems: failedForItem.length > 0 ? failedForItem : undefined,
+						metadata: itemMeta,
+					},
+					pairedItem: { item: i },
+				});
 			}
 
 			this.logger.info(
 				`OSS Vector insert complete: ${totalInserted} vectors written to ${indexName}` +
-					(failedItems.length > 0 ? `, ${failedItems.length} items failed: ${failedItems.join(', ')}` : ''),
+					(failedItemsGlobal.length > 0
+						? `, ${failedItemsGlobal.length} items failed: ${failedItemsGlobal.join(', ')}`
+						: ''),
 			);
 
-			// Pass through the first input item's metadata so downstream nodes can read
-			// the same fields without relying on n8n item-pairing across SplitInBatches.
-			const firstItemMeta =
-				items.length > 0
-					? ((items[0].json?.metadata as Record<string, unknown>) ?? {})
-					: {};
-
-			return [
-				[
-					{
-						json: {
-							success: failedItems.length === 0,
-							indexName,
-							sourceItems: items.length,
-							totalVectors: totalInserted,
-							failedItems: failedItems.length > 0 ? failedItems : undefined,
-							metadata: firstItemMeta,
+			if (outputItems.length === 0) {
+				return [
+					[
+						{
+							json: {
+								success: true,
+								indexName,
+								sourceItems: items.length,
+								totalVectors: 0,
+								metadata: {},
+							},
 						},
-					},
-				],
-			];
+					],
+				];
+			}
+
+			return [outputItems];
 		}
 
 		// retrieve: node acts as an AI sub-node supplying an OssVectorStore via supplyData().
