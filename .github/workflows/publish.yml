@@ -13,6 +13,8 @@ on:
     tags:
       - '*.*.*' # 如 0.2.37（npm version 若配置 tagVersionPrefix=""）
       - 'v*.*.*' # 如 v0.2.37（npm version 默认）
+  # 配置好 NPM_TOKEN 后，可在 Actions 里手动「Run workflow」重试发布（无需再打 tag）
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,6 +35,13 @@ jobs:
           node-version: '22'
           cache: npm
           registry-url: https://registry.npmjs.org
+
+      - name: Require NPM_TOKEN secret
+        run: |
+          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "::error::未配置仓库 Secret「NPM_TOKEN」。请到 Settings → Secrets and variables → Actions → New repository secret，填入 npm Granular Token（需具备本包 publish 权限）。"
+            exit 1
+          fi
 
       - name: Install dependencies
         run: npm ci
