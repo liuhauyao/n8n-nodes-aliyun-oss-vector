@@ -1,8 +1,8 @@
 # 通过 GitHub Actions 发布到 npm 并生成 provenance（2026-05-01 起 Creator Portal 验证要求）
 # 参考：https://docs.n8n.io/integrations/community-nodes/build-community-nodes/
 #
-# 一次性 npm：包 Settings → Trusted Publishers → GitHub Actions（workflow: publish.yml）
-# 首版若无法 OIDC，使用 NPM_TOKEN secret 发布一次后再配 Trusted Publisher。
+# 需在 GitHub 仓库设置 Secrets：NPM_TOKEN（npm Granular Token，具备该包 publish 权限）
+# 或通过 npm Trusted Publisher（OIDC）绑定本仓库与本 workflow，可不使用长期 token（见 npm 文档）
 #
 # 发版：npm version patch && git push origin HEAD --tags
 
