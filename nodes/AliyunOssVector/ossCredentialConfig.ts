@@ -102,7 +102,7 @@ async function httpsPostSigned(
 }
 
 /** Placeholder index name for credential test only. Must satisfy OSS Vector index naming (no leading/trailing underscores, etc.). */
-const CREDENTIAL_TEST_INDEX_NAME = 'n8ncredverify';
+export const CREDENTIAL_TEST_INDEX_NAME = 'n8ncredverify';
 
 /**
  * Calls OSS Vector GetVectorIndex with a synthetic index name to verify signing and endpoint.
