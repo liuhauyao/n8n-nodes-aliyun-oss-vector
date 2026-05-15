@@ -1,4 +1,3 @@
-import { DynamicStructuredTool } from '@langchain/core/tools';
 import type {
 	ICredentialsDecrypted,
 	ICredentialTestFunctions,
@@ -22,6 +21,8 @@ import {
 } from './OssVectorStore';
 import { credentialsDataToOssConfig, testOssVectorConnectivity } from './ossCredentialConfig';
 import { OssConfig } from './ossSign';
+import { LocalDynamicStructuredTool } from './localStructuredTool';
+import { waitMs } from './waitMs';
 
 async function getOssConfig(context: IExecuteFunctions | ISupplyDataFunctions): Promise<OssConfig> {
 	const credentials = await context.getCredentials('aliyunOssVectorApi');
@@ -298,7 +299,6 @@ export class AliyunOssVector implements INodeType {
 		//   retrieve → AiEmbedding (required)  [output is AiVectorStore]
 		//   query / delete → Main + AiEmbedding (required for query only)
 		//   deleteIndex → Main only
-		// eslint-disable-next-line n8n-nodes-base/node-class-description-inputs-wrong-regular-node
 		inputs: `={{ (() => {
 			const op = $parameter["operation"];
 			if (op === "insert") {
@@ -321,7 +321,6 @@ export class AliyunOssVector implements INodeType {
 			}
 			return [{ type: "main" }];
 		})() }}`,
-		// eslint-disable-next-line n8n-nodes-base/node-class-description-outputs-wrong-regular-node
 		outputs: `={{ (() => {
 			const op = $parameter["operation"];
 			if (op === "retrieve") return [{ displayName: "Vector Store", type: "${NodeConnectionTypes.AiVectorStore}" }];
@@ -457,7 +456,6 @@ export class AliyunOssVector implements INodeType {
 				name: 'metadataFilter',
 				type: 'json',
 				default: '{}',
-				// eslint-disable-next-line n8n-nodes-base/node-param-description-wrong-for-dynamic-options
 				description:
 					'Optional filter (OSS MongoDB-style operators). Invalid object-shaped JSON fails the node; stray text is ignored. Examples: {"docId":{"$eq":"abc"}}, {"$and":[{"docId":{"$eq":"abc"}}]}',
 				displayOptions: {
@@ -575,7 +573,6 @@ export class AliyunOssVector implements INodeType {
 				name: 'listMetadataMatch',
 				type: 'json',
 				default: '{}',
-				// eslint-disable-next-line n8n-nodes-base/node-param-description-wrong-for-dynamic-options
 				description:
 					'JSON object: only vectors whose metadata matches ALL fields (string equality; arrays in metadata match if any element equals) are included. Use expressions to map from upstream items. Empty {} lists every key in the index (paginated full scan — use with care on large indexes).',
 				displayOptions: {
@@ -641,7 +638,7 @@ export class AliyunOssVector implements INodeType {
 					const batch = keys.slice(off, off + DELETE_VECTORS_BATCH_SIZE);
 					await store.deleteVectors(batch);
 					if (off + DELETE_VECTORS_BATCH_SIZE < keys.length) {
-						await new Promise((r) => setTimeout(r, DELETE_BATCH_PAUSE_MS));
+						await waitMs(DELETE_BATCH_PAUSE_MS);
 					}
 				}
 				results.push({ json: { success: true, indexName, deletedKeys: keys } });
@@ -954,7 +951,7 @@ export class AliyunOssVector implements INodeType {
 				),
 		});
 
-		const tool = new DynamicStructuredTool({
+		const tool = new LocalDynamicStructuredTool({
 			name: toolName,
 			description: toolDescription,
 			schema,

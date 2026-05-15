@@ -27,10 +27,17 @@
 ## 环境要求
 
 - **n8n**：与当前 `peerDependencies` 中的 `n8n-workflow` 大版本兼容的 n8n（请按实际安装的 n8n 版本核对）。
-- **Node.js**：与 n8n 运行环境一致即可。
-- **依赖**：`@langchain/core`、`zod`（由 n8n / 工作流按需解析，以 `package.json` 中 `peerDependencies` 为准）。
+- **Node.js**：`package.json` 声明 **`engines.node` ≥ 18.18**（与全局 `fetch` / `AbortSignal.timeout` 等用法一致）；生产请以您安装的 n8n 所支持的 Node 为准。
+- **依赖声明**：`package.json` 的 `peerDependencies` 仅含 `n8n-workflow`（与 n8n Verified 社区包规则一致）。节点源码使用 `zod` 做工具参数校验，由 n8n 运行环境与官方 AI 相关依赖一并提供解析；无需自行在 peer 中声明 `zod`。
 
 安装社区节点后请**重启 n8n**，以便加载节点与凭证定义。
+
+---
+
+## 开发与校验（维护者）
+
+- **`npm run verify`**：先 `tsc` 构建并复制图标，再对 **`dist/**/*.js`** 使用 `@n8n/eslint-plugin-community-nodes` 的 **recommended + `no-console`**（与官方 `npx @n8n/scan-community-package` 拉取 tarball 后对其中 JS 的检查一致），并用脚本对根目录 **`package.json`** 做单文件校验（含 `valid-peer-dependencies`、`no-runtime-dependencies` 等）。
+- 发版或提交前建议在仓库根目录执行 **`npm run verify`** 通过后再发布。
 
 ---
 

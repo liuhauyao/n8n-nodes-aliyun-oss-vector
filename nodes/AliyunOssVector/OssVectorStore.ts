@@ -1,5 +1,5 @@
-import * as https from 'https';
 import { buildOssAuth, OssConfig } from './ossSign';
+import { waitMs } from './waitMs';
 
 export interface OssVectorStoreConfig extends OssConfig {
 	indexName: string;
@@ -91,44 +91,21 @@ export interface EmbeddingsLike {
  */
 const NON_FILTERABLE_KEYS: ReadonlySet<string> = new Set(['pageContent']);
 
-function httpsPost(url: string, headers: Record<string, string>, body: string): Promise<string> {
-	return new Promise((resolve, reject) => {
-		const urlObj = new URL(url);
-		const options: https.RequestOptions = {
-			hostname: urlObj.hostname,
-			path: urlObj.pathname + urlObj.search,
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'Content-Length': Buffer.byteLength(body),
-				...headers,
-			},
-		};
-		const req = https.request(options, (res) => {
-			let data = '';
-			res.on('data', (chunk: string) => (data += chunk));
-			res.on('end', () => {
-				// 204 No Content is success (e.g. deleteVectors)
-				if (res.statusCode === 204) {
-					resolve('');
-					return;
-				}
-				if (res.statusCode && res.statusCode >= 400) {
-					reject(new Error('OSS API error ' + res.statusCode + ': ' + data));
-				} else {
-					resolve(data);
-				}
-			});
-		});
-		req.on('error', reject);
-		req.write(body);
-		req.end();
+async function httpsPost(url: string, headers: Record<string, string>, body: string): Promise<string> {
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			...headers,
+		},
+		body,
 	});
-}
-
-/** Sleep helper for QPS throttling (OSS putVectors QPS ≤ 5). */
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+	const data = await res.text();
+	if (res.status === 204) return '';
+	if (res.status >= 400) {
+		throw new Error('OSS API error ' + res.status + ': ' + data);
+	}
+	return data;
 }
 
 export class OssVectorStore {
@@ -200,7 +177,7 @@ export class OssVectorStore {
 		const pollMs = 3000;
 		const deadline = Date.now() + timeoutMs;
 		while (Date.now() < deadline) {
-			await sleep(pollMs);
+			await waitMs(pollMs);
 			try {
 				const resp = (await this.callOssApi('getVectorIndex', {
 					indexName: this.config.indexName,
@@ -211,7 +188,7 @@ export class OssVectorStore {
 					// propagation delay before it can accept writes. Empirically, the first
 					// putVectors call within ~10s of "enable" still returns 500 InternalError.
 					// A fixed 12s buffer eliminates this race condition in the vast majority of cases.
-					await sleep(12000);
+					await waitMs(12000);
 					return;
 				}
 				if (status === 'deleting') {
@@ -270,7 +247,7 @@ export class OssVectorStore {
 				// 5xx: transient OSS control-plane error — retry with backoff (5s → 10s → 20s).
 				if (msg.includes('OSS API error 5')) {
 					lastErr = err instanceof Error ? err : new Error(msg);
-					if (attempt < 3) await sleep(5000 * Math.pow(2, attempt));
+					if (attempt < 3) await waitMs(5000 * Math.pow(2, attempt));
 					continue;
 				}
 				// Other errors (4xx, auth failures, etc.): throw immediately.
@@ -348,7 +325,7 @@ export class OssVectorStore {
 				lastErr = err instanceof Error ? err : new Error(String(err));
 				// Only retry on 5xx; propagate 4xx immediately.
 				if (!lastErr.message.includes('OSS API error 5')) throw lastErr;
-				if (attempt < maxRetries) await sleep(5000 * Math.pow(2, attempt));
+				if (attempt < maxRetries) await waitMs(5000 * Math.pow(2, attempt));
 			}
 		}
 		throw lastErr;
@@ -398,7 +375,7 @@ export class OssVectorStore {
 		// Batch size 10 keeps each request body small (~200KB for 2560-dim vectors).
 		const BATCH_SIZE = 10;
 		for (let i = 0; i < ossVectors.length; i += BATCH_SIZE) {
-			if (i > 0) await sleep(250);
+			if (i > 0) await waitMs(250);
 			await this.putVectorsWithRetry(ossVectors.slice(i, i + BATCH_SIZE));
 		}
 		return validEntries.map(({ doc }) => (doc.metadata?.pointId as string) || '');
@@ -477,7 +454,7 @@ export class OssVectorStore {
 			nextToken = nt && String(nt).length > 0 ? String(nt) : undefined;
 
 			if (nextToken) {
-				await sleep(LIST_VECTORS_PAGE_DELAY_MS);
+				await waitMs(LIST_VECTORS_PAGE_DELAY_MS);
 			}
 		} while (nextToken);
 

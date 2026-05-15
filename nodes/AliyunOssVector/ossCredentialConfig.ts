@@ -1,4 +1,3 @@
-import * as https from 'https';
 import type { ICredentialDataDecryptedObject } from 'n8n-workflow';
 
 import { buildOssAuth, type OssConfig } from './ossSign';
@@ -83,38 +82,23 @@ export function credentialsDataToOssConfig(data: ICredentialDataDecryptedObject)
 	return { accessKeyId, accessKeySecret, ...parsed };
 }
 
-function httpsPostSigned(auth: ReturnType<typeof buildOssAuth>): Promise<{ statusCode: number; body: string }> {
-	return new Promise((resolve, reject) => {
-		const urlObj = new URL(auth.url);
-		const body = auth.bodyJson;
-		const req = https.request(
-			{
-				hostname: urlObj.hostname,
-				path: urlObj.pathname + urlObj.search,
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'Content-Length': Buffer.byteLength(body),
-					Authorization: auth.authorization,
-					'x-oss-date': auth.xOssDate,
-					'x-oss-content-sha256': auth.xOssContentSha256,
-					Host: auth.host,
-				},
-			},
-			(res) => {
-				let data = '';
-				res.on('data', (chunk: string) => {
-					data += chunk;
-				});
-				res.on('end', () => {
-					resolve({ statusCode: res.statusCode ?? 0, body: data });
-				});
-			},
-		);
-		req.on('error', reject);
-		req.write(body);
-		req.end();
+async function httpsPostSigned(
+	auth: ReturnType<typeof buildOssAuth>,
+): Promise<{ statusCode: number; body: string }> {
+	const body = auth.bodyJson;
+	const res = await fetch(auth.url, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: auth.authorization,
+			'x-oss-date': auth.xOssDate,
+			'x-oss-content-sha256': auth.xOssContentSha256,
+			Host: auth.host,
+		},
+		body,
 	});
+	const data = await res.text();
+	return { statusCode: res.status, body: data };
 }
 
 /** Placeholder index name for credential test only. Must satisfy OSS Vector index naming (no leading/trailing underscores, etc.). */

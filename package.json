@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-aliyun-oss-vector",
-  "version": "0.2.31",
+  "version": "0.2.32",
   "description": "n8n community node for Alibaba Cloud OSS Vector Bucket — supports insert, retrieve and delete operations with built-in OSS v4 signing.",
   "keywords": [
     "n8n-community-node-package",
@@ -8,30 +8,37 @@
     "aliyun",
     "alibaba",
     "oss",
+    "oss-vector",
     "vector",
     "langchain"
   ],
-	"license": "MIT",
-	"author": "Matrees",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/liuhauyao/n8n-nodes-aliyun-oss-vector.git"
-	},
-	"bugs": {
-		"url": "https://github.com/liuhauyao/n8n-nodes-aliyun-oss-vector/issues"
-	},
-	"homepage": "https://github.com/liuhauyao/n8n-nodes-aliyun-oss-vector#readme",
-	"main": "index.js",
+  "license": "MIT",
+  "author": "Matrees",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liuhauyao/n8n-nodes-aliyun-oss-vector.git"
+  },
+  "bugs": {
+    "url": "https://github.com/liuhauyao/n8n-nodes-aliyun-oss-vector/issues"
+  },
+  "homepage": "https://github.com/liuhauyao/n8n-nodes-aliyun-oss-vector#readme",
+  "main": "dist/nodes/AliyunOssVector/AliyunOssVector.node.js",
   "scripts": {
     "build": "tsc && npm run copy-icons",
     "prepack": "npm run build",
     "copy-icons": "copyfiles \"nodes/**/*.svg\" \"credentials/*.svg\" dist/",
     "dev": "tsc --watch",
-    "lint": "eslint nodes credentials --ext .ts"
+    "verify": "npm run build && eslint dist && node scripts/lint-package-json.mjs",
+    "lint": "eslint dist && node scripts/lint-package-json.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
+  "engines": {
+    "node": ">=18.18"
+  },
   "n8n": {
     "n8nNodesApiVersion": 1,
     "credentials": [
@@ -42,16 +49,15 @@
     ]
   },
   "devDependencies": {
-    "@langchain/core": "^1.1.44",
+    "@n8n/eslint-plugin-community-nodes": "^0.15.0",
     "@types/node": "^20.0.0",
     "copyfiles": "^2.4.1",
+    "eslint": "^9.29.0",
     "n8n-workflow": "*",
     "typescript": "^5.3.0",
     "zod": "*"
   },
   "peerDependencies": {
-    "@langchain/core": "*",
-    "n8n-workflow": "*",
-    "zod": "*"
+    "n8n-workflow": "*"
   }
 }

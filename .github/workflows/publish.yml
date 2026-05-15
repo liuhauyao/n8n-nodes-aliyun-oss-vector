@@ -1,0 +1,45 @@
+# 通过 GitHub Actions 发布到 npm 并生成 provenance（2026-05-01 起 Creator Portal 验证要求）
+# 参考：https://docs.n8n.io/integrations/community-nodes/build-community-nodes/
+#
+# 一次性 npm：包 Settings → Trusted Publishers → GitHub Actions（workflow: publish.yml）
+# 首版若无法 OIDC，使用 NPM_TOKEN secret 发布一次后再配 Trusted Publisher。
+#
+# 发版：npm version patch && git push origin HEAD --tags
+
+name: Publish
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify (n8n community ESLint)
+        run: npm run verify
+
+      - name: Publish to npm with provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
