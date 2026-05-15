@@ -11,7 +11,8 @@ name: Publish
 on:
   push:
     tags:
-      - '*.*.*'
+      - '*.*.*' # 如 0.2.37（npm version 若配置 tagVersionPrefix=""）
+      - 'v*.*.*' # 如 v0.2.37（npm version 默认）
 
 permissions:
   contents: read
