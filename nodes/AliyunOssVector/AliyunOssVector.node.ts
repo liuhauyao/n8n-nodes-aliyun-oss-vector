@@ -947,8 +947,12 @@ export class AliyunOssVector implements INodeType {
 		const schema = z.object({
 			input: z
 				.string()
+				// .regex() generates JSON Schema `pattern`, which DeepSeek strict mode supports.
+				// This forces a non-empty string at the API level (unlike .min(1) which generates
+				// `minLength` — unsupported by DeepSeek strict mode and therefore ignored).
+				.regex(/^.+/, 'Search query must not be empty')
 				.describe(
-					'Search query (required, must not be empty). Provide a specific keyword, question, or phrase to look up in the vector store. Do not call this tool with an empty string.',
+					'Search query. A specific keyword, question, or phrase to look up in the vector store. Must be a non-empty string.',
 				),
 		});
 
