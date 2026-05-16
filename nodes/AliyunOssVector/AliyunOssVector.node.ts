@@ -53,6 +53,8 @@ const QUERY_CONTEXT_NOISE_KEYS = new Set([
 	'hitlParameters',
 	'systemPrompt',
 	'system_prompt',
+	'systemMessage',
+	'system_message',
 	'messages',
 	'sessionId',
 	'session_id',
@@ -124,7 +126,7 @@ function extractRetrieveToolQueryString(itemJson: IDataObject): string | undefin
 		if (afterNoise) return afterNoise;
 
 		const stringVals = entries
-			.filter(([, v]) => typeof v === 'string' && (v as string).trim().length > 0)
+			.filter(([, v]) => typeof v === 'string' && (v as string).trim().length > 0 && (v as string).trim().length <= 500)
 			.map(([, v]) => (v as string).trim());
 		if (stringVals.length === 1) return stringVals[0];
 
@@ -262,9 +264,9 @@ function scoredDocsToToolBlocks(
 	}));
 }
 
-/** Returned as tool output text — wording discourages identical retries under Agent Max iterations. */
+/** Returned as tool output text — instructs the model to stop and answer, not retry. */
 const EMPTY_RETRIEVAL_MESSAGE =
-	'No relevant documents found for this query. Do not repeat the exact same query in a loop; rephrase once at most, otherwise answer from general context and state that retrieval was empty.';
+	'[RETRIEVAL EMPTY] No relevant records found in the knowledge base for this query. STOP calling this tool. Answer the user immediately based on your general knowledge and explicitly tell them the knowledge base has no relevant records for this topic.';
 
 function scoredDocsToLlmText(docs: ScoredDoc[], includeMetadata: boolean): string {
 	if (docs.length === 0) return EMPTY_RETRIEVAL_MESSAGE;
