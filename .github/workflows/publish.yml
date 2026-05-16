@@ -4,9 +4,10 @@
 # 需在 GitHub 仓库设置 Secrets：NPM_TOKEN（npm Granular Token，具备该包 publish 权限）
 # 或通过 npm Trusted Publisher（OIDC）绑定本仓库与本 workflow，可不使用长期 token（见 npm 文档）
 #
-# · push 到 main / PR 对准 main：仅执行 npm run verify（不需要 NPM_TOKEN）
-# · 打 tag（*.*.* 或 v*.*.*）或手动 Run workflow：verify 通过后 npm publish
-# 发版：npm version patch && git push origin HEAD --tags
+# · push 到 main 或打 tag（*.*.* / v*.*.*）：verify 通过后自动 npm publish（需 NPM_TOKEN）
+# · PR 对准 main：仅 verify（不发布）
+# · 手动 Run workflow：verify 通过后发布（用于重试或紧急发版）
+# 若 registry 上已有同版本，npm publish 会失败，需先 bump package.json 版本再推送 main。
 
 name: Publish
 
@@ -48,7 +49,7 @@ jobs:
   publish:
     name: Publish to npm
     needs: verify
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')))
     runs-on: ubuntu-latest
     concurrency:
       group: npm-publish-${{ github.repository }}
