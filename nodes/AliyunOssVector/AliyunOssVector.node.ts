@@ -873,7 +873,7 @@ export class AliyunOssVector implements INodeType {
 			if (!query) {
 				resultData.push({
 					json: {
-						response: [{ type: 'text' as const, text: 'Error: no search query provided. Please retry with a specific keyword or question.' }],
+						response: [{ type: 'text' as const, text: '[TOOL ERROR] No search query was extracted from the tool call arguments. DO NOT call this tool again with empty arguments. Answer the user directly from your own knowledge instead.' }],
 					},
 					pairedItem: { item: itemIndex },
 				});
@@ -961,7 +961,7 @@ export class AliyunOssVector implements INodeType {
 				const queryString = args.input.trim();
 
 				if (!queryString) {
-					return 'Error: empty query string.';
+					return '[TOOL ERROR] Empty query string. DO NOT call this tool again with empty arguments. Answer the user directly from your own knowledge instead.';
 				}
 
 				const { index } = context.addInputData(NodeConnectionTypes.AiTool, [
