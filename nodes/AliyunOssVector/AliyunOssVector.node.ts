@@ -947,9 +947,8 @@ export class AliyunOssVector implements INodeType {
 		const schema = z.object({
 			input: z
 				.string()
-				.min(1, 'Search query must not be empty')
 				.describe(
-					'Search query (required). Provide a non-empty keyword, question, or phrase to look up in the vector store.',
+					'Search query (required, must not be empty). Provide a specific keyword, question, or phrase to look up in the vector store. Do not call this tool with an empty string.',
 				),
 		});
 
